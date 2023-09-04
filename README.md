@@ -64,168 +64,18 @@ reconstructions quite dramatically.
 ### Process
 
 For the challenge, I decided to focus my efforts initially on the phantom A with difficulty 7, look at the
-various angle cases and then try to apply the gained knowledge to the other phantoms.
+various angle cases and then try to apply the gained knowledge to the other phantoms. My procedure was basically
+the following:
+  1. Determine best starting point with FBP (Filtered BackProjection)
+  2. Choose promising formulations (Usually a linear system with some regularization)
+  3. Determine formulation/algorithm combinations and optimizer setup
+  4. Compare formulations and explore formulation parameters
+  5. Trim combinations and formulations
+  6. Extrapolate to other phantoms and Squeeze
 
-#### 1. Determine best starting point with FBP (Filtered BackProjection)
+### Results
 
-At first, I wanted to establish some baseline, so I ran FBP for the various angle cases and played a bit around with
-filters to also get the best starting point for further optimization. I also experimented with cosine weighting, but
-this only led to worse results.
-
-The established baselines were the following:
-
-![img.png](img/sub_fbp.png)
-
-One notices that the full arc case is basically solved with FBP already. Nonetheless, I decided to keep the full arc
-case for now.
-
-Before starting further investigation, I implemented a cropping algorithm.
-I tried to detect the disc by finding the maximum gradient and using this as a radius, which seemed to work quite well,
-while also being relatively fast to compute, especially since the distances can precomputed.
-This improved the baselines quite substantially for the lower angles cases, as it removed artefacts:
-
-![img.png](img/sub_fbp_crop.png)
-
-#### 2. Choosing promising formulations
-
-The next step was to search for the best problem description of each case, while also trying to find an algorithm that
-solves it quickly.
-
-The formulations I decided to try are the following 7:
-
-- Least squares
-- Tihkonov
-- Least squares with Huber loss
-- Least squares with Fair loss
-- Lasso
-- Elastic net
-- Isotropic TV with Central Differences
-
-#### 3. Determining formulation/algorithm combinations and optimizer setup
-
-Starting with those formulations, the next step was finding algorithms, step size schedulers and hyperparameters that
-solve them well. The idea was to have one simple algorithm, which serves as another robust reference, and otherwise the
-most sophisticated algorithms.
-
-This meant for the first 4 differentiable formulations, I chose the following algorithms:
-
-- Gradient descent with a BarzilaiBorwein step size scheduler
-- ADAM with a constant step size
-- OGM with a constant step size
-- CG
-
-For the Lasso and Elastic Net formulation, I chose the following algorithms:
-
-- Proximal gradient with a constant step size
-- OPGM with a constant step size
-- ADMM with a constant step size and tau=100
-
-While Isotropic TV is only solvable via ADMM.
-
-Furthermore, I tried all those combinations with 2 different runners:
-
-- plain runner: that just ran 200 iterations and
-- fancy runner: who had the same iteration budget but also used early stopping with patience of 10 and restarting
-  whenever the patience decreased.
-
-All had an initial step size of 1/2*L, where L is the Lipschitz Constant, and the previously discussed fbp as initial guess.
-This resulted in a total of 184 runs for all angle cases.
-
-For the choice of runners, I had a look at the convergence plots of the different algorithms and compared the runners,
-showing all of them would probably be too much, so I decided to only show the 360° case, as it is representative for
-all of them:
-
-![sub_runner_loss.png](img%2Fsub_runner_loss.png)
-
-Most notable ADAM really does not work well with restarts, and furthermore, restarts did not seem to improve convergence
-in any scenario, besides conjugate gradient and temporarily ADMM, but the improvement is not substantial if the
-iteration is stopped early.
-However, the fancy runner did in general achieve similar loss with fewer iterations, therefore, I decided
-to keep early stopping, but not restart and also double the maximum number of iterations to 400. Furthermore, I
-increased the patience to 40 iterations, to be able to cross ADMMs oscillations.
-
-The best results in this run were achieved by the following formulation/algorithm combinations:
-
-![img.png](img/sub_run1_best_scores.png)
-
-Based on the following convergence plots for the plain runner:
-
-![sub_algo_form_loss.png](img%2Fsub_algo_form_loss.png)
-
-I decided to keep the following combinations of formulations and algorithms:
-
-- Least squares: Gradient descent with BarzilaiBorwein step size scheduler
-- Tihkonov: CG & Gradient descent with BarzilaiBorwein step size scheduler
-- Least squares with Huber loss: OGM
-- Least squares with Fair loss: OGM
-- Lasso: OPGM & ADMM
-- Elastic net: OPGM & ADMM
-- Isotropic TV with Central Differences: ADMM
-
-#### 4. Comparing formulations and exploring formulation parameters
-
-Continuing with the chosen formulations and algorithms, I decided to explore the parameters of the formulations with
-the following sweep:
-
-- Least squares: no parameters
-- Tihkonov: regularization strength sweep [logspace(-5, 0, 10)]
-- Least squares with Huber loss: regularization strength & delta sweep [logspace(-5, 0, 10), np.logspace(-3, -1, 3)]
-- Least squares with Fair loss: regularization strength & delta sweep [logspace(-5, 0, 10), np.logspace(-3, -1, 3)]
-- Lasso: regularization strength sweep [logspace(-5, 0, 10)]
-- Elastic net: regularization strength sweep for both norms [logspace(-5, 0, 10), np.linspace(-5, 0, 5)] less
-  exploration
-  for the l2 norm
-- Isotropic TV with Central Differences: regularization strength sweep [logspace(-5, 0, 10)]
-
-This, together with the algorithms, resulted in a total of 211 runs per arc, which took roughly 2 hours to compute.
-The best scores achieved in this run were the following:
-
-![img.png](img/sub_run2_best_scores.png)
-
-#### 5. Trim combinations and formulations
-
-Looking at the best results each formulation could achieve in the following run, I tried to reduce the number of
-possible runs by removing outscored formulations and combinations. The left combinations were the following:
-
-- 360°
-    - Least squares with Huber(beta=0.0215, delta=0.01): OGM
-- 90°
-    - Lasso(beta=0.0774): OPGM
-    - Least squares with Huber(beta=1, delta=0.01): OGM
-- 60°
-    - Lasso(beta=0.0774): OPGM
-    - Least squares with Huber(beta=1, delta=0.01): OGM
-- 30°
-    - Lasso(beta=0.0004641): OPGM
-    - TVRegularization(beta=0.0215): ADMM
-    - Elastic net(beta=1e5,beta2=1): ADMM
-
-with this trimming, only 8 runs remained per phantom.
-Before finalizing and extrapolating to the other phantoms. I wanted to revisit the parameters for the Huber formulation
-in the 60° and 90° arc, as well as the elastic net formulation in the 30° arc, as they were at the edge of the
-swept parameter range.
-This led to another 100 runs, which took roughly 20 min to compute and updated the parameters as following:
-
-- 360°
-    - Least squares with Huber(beta=0.0215, delta=0.01): OGM
-- 90°
-    - Lasso(beta=0.0774): OPGM
-    - Least squares with Huber(beta=2.154, delta=0.01): OGM
-- 60°
-    - Lasso(beta=0.0774): OPGM
-    - Least squares with Huber(beta=0.7742, delta=0.01): OGM
-- 30°
-    - Lasso(beta=0.0004641): OPGM
-    - TVRegularization(beta=0.0215): ADMM
-    - Elastic net(beta=10,beta2=1): ADMM
-
-#### 6. Extrapolate to other phantoms and Squeeze
-
-Finally, the results from the one phantom were extrapolated to the other phantoms and the maximum iterations were
-increased to 1000.
-This resulted in 168 runs, which took roughly half an hour to compute.
-
-My final best scores and their associated parameters are the following:
+My final best scores and their associated parameters are the following (Scores go from 0 to 1):
 
 ARC: 360
 
