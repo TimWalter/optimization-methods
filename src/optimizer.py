@@ -226,6 +226,7 @@ class Optimizer:
         class AdamState:
             m: np.ndarray
             v: np.ndarray
+            t: int
 
         def reset(_: np.ndarray):
             self.state.m = np.zeros_like(self.x0)
@@ -234,12 +235,13 @@ class Optimizer:
         def adam_step(x: np.ndarray, alpha: float, _: int) -> np.ndarray:
             g = self.formulation.df(x)
             self.state.m = beta1 * self.state.m + (1 - beta1) * g
-            self.state.v = beta2 * self.state.v + (1 - beta2) * g ** 2
-            m_hat = self.state.m / (1 - beta1)
-            v_hat = self.state.v / (1 - beta2)
+            self.state.v = beta2 * self.state.v + (1 - beta2) * np.power(g, 2)
+            m_hat = self.state.m / (1 - np.power(beta1, self.state.t))
+            v_hat = self.state.v / (1 - np.power(beta2, self.state.t))
+            self.state.t += 1
             return x - alpha * m_hat / (np.sqrt(v_hat) + epsilon)
 
-        self.state = AdamState(m=np.zeros_like(self.x0), v=np.zeros_like(self.x0))
+        self.state = AdamState(m=np.zeros_like(self.x0), v=np.zeros_like(self.x0), t=1)
         return self.__optimize(adam_step, reset)
 
     def optimized_gradient(self) -> OptimizationResult:
